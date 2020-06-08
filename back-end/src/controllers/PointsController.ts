@@ -3,8 +3,8 @@ import knex from '../database/connection';
 
 class PointsController {
 
-    async index(req : Request, res: Response) {
-        const {city, uf , items} = req.query;
+    async index(request : Request, response: Response) {
+        const {city, uf , items} = request.query;
 
        const parsedItems = String(items).split(',')
        .map( item => Number(item.trim()));
@@ -12,29 +12,44 @@ class PointsController {
        const points = await knex('points')
        .join('points_items', 'points.id', '=', 'points_items.point_id')
        .whereIn('points_items.items_id', parsedItems)
-       .where('city', String(city)).where('uf', String(uf)).distinct()
+       .where('city', String(city))
+       .where('uf', String(uf))
+       .distinct()
        .select('points.*');
 
-        return res.json(points);
+       const serializedPoints = points.map(point=>{
+           return{
+               ...point,
+               image_url: `http://192.168.1.112:3333/uploads/${point.image}`
+           }
+       });
+
+        return response.json(serializedPoints);
     }
 
-    async show(req : Request, res: Response) {
-        const { id } = req.params;
+    async show(request : Request, response: Response) {
+        const { id } = request.params;
        
         const point = await knex('points').where('id', id).first();
 
-        if(!point)
-            return res.status(400).json({msg: 'Point not found'});
+        if(!point){
+            return response.status(400).json({msg: 'Point not found'});
+        }
+
+        const serializedPoint = {
+                ...point,
+                image_url: `http://192.168.1.112:3333/uploads/${point.image}`
+            }
 
         const items = await knex('items')
         .join('points_items', 'items.id', '=', 'points_items.items_id')
         .where('points_items.point_id', id)
         .select('items.title');
 
-        return res.json({point, items});
+        return response.json({point:serializedPoint, items});
     }    
 
-    async create(req : Request, res: Response) {
+    async create(request : Request, response: Response) {
         const {
             name,
             email,
@@ -44,15 +59,14 @@ class PointsController {
             city,
             uf,
             items
-        } = req.body;
+        } = request.body;
     
         // If de 1st query dont work, de 2nd will be fail to
         const trx = await knex.transaction();
 
         const point = {
             image: 'https://images.unsplash.com/photo-1542838132-92c53300491e?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=crop&w=400&q=50',
-             name, // ist the same =>  name:name, can short this commands becouse we
-             // using the same name to var and key
+             name, 
              email,
              whatsapp,
              latitude,
@@ -65,22 +79,27 @@ class PointsController {
     
         const point_id = insertedIds[0];
     
-        const pointItems = items.map((items_id: number) => {
+        const pointItems = items.
+        split(',')
+        .map((item: string) =>Number(item.trim()))
+        .map((items_id: number) => {
             return{
                 items_id,
                 point_id,
             };
         });
     
-        await trx('points_items').insert(pointItems);
-
-        await trx.commit();
-    
-        return res.json({
-            id: point_id,
-            ...point,
-    
-        });
+        try {
+            await trx('points_items').insert(pointItems)
+      
+            await trx.commit();
+          } catch (error) {
+            await trx.rollback();
+      
+            return response.status(400).json({ message: 'Falha na inserção na tabela point_items, verifique se os items informados são válidos' })
+          }
+      
+          return response.json({ id: point_id, ...point, });
     }
 }
 
